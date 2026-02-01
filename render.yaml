@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: my-backend
+    env: node
+    plan: free
+    branch: main
+    buildCommand: "npm install"
+    startCommand: "npm start"
+    envVars:
+      - key: NODE_ENV
+        value: "production"
+      - key: PORT
+        value: "10000"  # optional, Render will provide $PORT automatically
+      # - key: DB_URL
+      #   fromSecret: DB_URL_SECRET   # if you want to use Render secrets
