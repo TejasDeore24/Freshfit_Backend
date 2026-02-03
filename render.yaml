@@ -1,8 +1,7 @@
 services:
   - type: web
-    name: my-backend
+    name: backend
     env: node
     plan: free
-    branch: main
-    buildCommand: "npm install"
-    startCommand: "node server.js"
+    buildCommand: npm install
+    startCommand: npm start
