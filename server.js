@@ -149,7 +149,7 @@ app.post("/ngo/register", async (req, res) => {
     res.status(400).json({ success: false, message: err.message });
   }
 });
-
+//NGO_Login
 app.post("/ngo/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -188,28 +188,7 @@ app.post("/donate", upload.single("photo"), async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
-
-// ======================
-// VOLUNTEER REQUESTS
-// ======================
-app.post("/volunteer/join", async (req, res) => {
-  try {
-    const { userId, ngoId } = req.body;
-
-    const exists = await VolunteerRequest.findOne({ user_id: userId, ngo_id: ngoId });
-    if (exists) return res.json({ success: false, message: "Request already sent." });
-
-    const request = await VolunteerRequest.create({
-      user_id: userId,
-      ngo_id: ngoId,
-    });
-
-    res.json({ success: true, message: "Volunteer request sent!", request });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
+ 
 // ======================
 // NGO STATS
 // ======================
