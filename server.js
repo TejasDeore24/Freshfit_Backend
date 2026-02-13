@@ -734,6 +734,34 @@ app.post("/volunteer/join", async (req, res) => {
   }
 });
 
+// ======================
+// GET VOLUNTEER REQUESTS FOR USER
+// ======================
+app.get("/volunteer/my-requests/:userId", async (req, res) => {
+  try {
+    const userId = req.params.userId;
+
+    const requests = await VolunteerRequest.find({ user_id: userId })
+      .populate("ngo_id", "name")
+      .sort({ created_at: -1 });
+
+    res.json({
+      success: true,
+      requests: requests.map((r) => ({
+        _id: r._id,
+        status: r.status,
+        ngo_name: r.ngo_id?.name || "Unknown NGO",
+        created_at: r.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error("Fetch user volunteer requests error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+});
 
 
 // ======================
