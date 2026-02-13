@@ -10,6 +10,15 @@ const bcrypt = require("bcrypt");
 const path = require("path");
 const fs = require("fs");
 
+const cloudinary = require("cloudinary").v2;
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -54,16 +63,28 @@ const NgoSchema = new mongoose.Schema({
   description: String,
 });
 
-const DonationSchema = new mongoose.Schema({
-  user_id: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  ngo_id: { type: mongoose.Schema.Types.ObjectId, ref: "Ngo" },
-  category: String,
-  quantity: String,
-  address: String,
-  notes: String,
-  photo: String,
-  status: { type: String, default: "Pending" },
-});
+const DonationSchema = new mongoose.Schema(
+  {
+    user_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    ngo_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Ngo",
+      required: true,
+    },
+    category: { type: String, required: true },
+    quantity: { type: Number, required: true },
+    address: { type: String, required: true },
+    notes: String,
+    photo: { type: String, required: true },
+    status: { type: String, default: "Pending" },
+  },
+  { timestamps: true }
+);
+
 
 const VolunteerRequestSchema = new mongoose.Schema({
   user_id: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
@@ -77,28 +98,45 @@ const Ngo = mongoose.model("Ngo", NgoSchema);
 const Donation = mongoose.model("Donation", DonationSchema);
 const VolunteerRequest = mongoose.model("VolunteerRequest", VolunteerRequestSchema);
 
+// // ======================
+// // FILE UPLOAD SETUP
+// // ======================
 // ======================
-// FILE UPLOAD SETUP
+// FILE UPLOAD SETUP (UPDATED – SAFE)
 // ======================
 const uploadDir = path.join(__dirname, "uploads");
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+
+// Ensure uploads folder exists
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
 
 const storage = multer.diskStorage({
-  destination: (_, __, cb) => cb(null, uploadDir),
-  filename: (_, file, cb) => cb(null, Date.now() + "-" + file.originalname),
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname)}`;
+    cb(null, uniqueName);
+  },
 });
 
 const upload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB limit
-  fileFilter: (_, file, cb) => {
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5 MB
+  },
+  fileFilter: (req, file, cb) => {
     const allowedTypes = ["image/jpeg", "image/png", "image/jpg"];
+
     if (!allowedTypes.includes(file.mimetype)) {
-      return cb(new Error("Only JPEG, JPG, PNG files are allowed"));
+      return cb(new Error("Only JPG, JPEG, PNG images are allowed"));
     }
+
     cb(null, true);
   },
 });
+
 
 // ======================
 // TEST ROUTE
@@ -173,22 +211,85 @@ app.get("/ngos", async (_, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
-
-// ======================
-// DONATIONS
-// ======================
+////////////////////
+// DONATE ROUTE //
+///////////////////
 app.post("/donate", upload.single("photo"), async (req, res) => {
   try {
-    const donation = await Donation.create({
-      ...req.body,
-      photo: req.file?.filename || null,
+    const { user_id, ngo_id, category, quantity, address, notes } = req.body;
+
+    // 1. Validate required fields
+    if (!user_id || !ngo_id || !category || !quantity || !address) {
+      return res.status(400).json({
+        success: false,
+        message: "All required fields must be provided",
+      });
+    }
+
+    // 2. Validate ObjectIds
+    if (
+      !mongoose.Types.ObjectId.isValid(user_id) ||
+      !mongoose.Types.ObjectId.isValid(ngo_id)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user or NGO ID",
+      });
+    }
+
+    // 3. Validate quantity
+    if (Number(quantity) <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Quantity must be greater than 0",
+      });
+    }
+
+    // 4. Validate photo
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Photo is required",
+      });
+    }
+
+    // 5. Upload to Cloudinary
+    const result = await cloudinary.uploader.upload(req.file.path, {
+      folder: "donations",
     });
-    res.json({ success: true, message: "Donation submitted successfully!", donation });
+
+    // 6. Save donation
+    const donation = await Donation.create({
+      user_id,
+      ngo_id,
+      category,
+      quantity: Number(quantity),
+      address,
+      notes,
+      photo: result.secure_url,
+    });
+
+    // 7. Cleanup temp file
+    fs.unlink(req.file.path, (err) => {
+      if (err) console.error("Temp file cleanup failed:", err);
+    });
+
+    res.json({
+      success: true,
+      message: "Donation submitted successfully",
+      donation,
+    });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    console.error("Donate route error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Donation failed",
+    });
   }
 });
- 
+
+
+
 // ======================
 // NGO STATS
 // ======================
@@ -205,6 +306,9 @@ app.get("/ngo/:id/stats", async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
+
+
+
 // ======================
 // GET DONATIONS FOR USER
 // ======================
@@ -222,6 +326,8 @@ app.get("/donations", async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
+
+
 // ======================
 // EDIT USER PROFILE
 // ======================
@@ -371,8 +477,11 @@ app.get("/ngo/:id/volunteer-requests", async (req, res) => {
       requests: requests.map((r) => ({
         _id: r._id,
         status: r.status,
-        user_name: r.user_id?.name || "Unknown User",
-        user_email: r.user_id?.email || "N/A",
+        user: {
+          name: r.user_id?.name || "Unknown User",
+          email: r.user_id?.email || "N/A",
+        },
+        created_at: r.created_at,
       })),
     });
   } catch (err) {
@@ -383,6 +492,7 @@ app.get("/ngo/:id/volunteer-requests", async (req, res) => {
     });
   }
 });
+
 // ======================
 // GET APPROVED VOLUNTEERS FOR NGO
 // ======================
@@ -415,11 +525,12 @@ app.get("/ngo/:id/volunteers", async (req, res) => {
   }
 });
 // ======================
-// GET VOLUNTEER REQUESTS FOR USER
+// GET VOLUNTEER REQUESTS FOR NGO
 // ======================
 app.get("/ngo/:id/volunteer-requests", async (req, res) => {
   try {
     const ngoId = req.params.id;
+
     const requests = await VolunteerRequest.find({ ngo_id: ngoId })
       .populate("user_id", "name email")
       .sort({ created_at: -1 });
@@ -429,15 +540,22 @@ app.get("/ngo/:id/volunteer-requests", async (req, res) => {
       requests: requests.map((r) => ({
         _id: r._id,
         status: r.status,
-        user: r.user_id,
+        user: {
+          name: r.user_id?.name || "Unknown User",
+          email: r.user_id?.email || "N/A",
+        },
         created_at: r.created_at,
       })),
     });
   } catch (err) {
     console.error("Fetch volunteer requests error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
   }
 });
+
 
 // ======================
 // GET DONATIONS FOR NGO
@@ -567,6 +685,56 @@ app.delete("/volunteer/:id/cancel", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
+
+// ======================
+// JOIN NGO (CREATE VOLUNTEER REQUEST)
+// ======================
+app.post("/volunteer/join", async (req, res) => {
+  try {
+    const { userId, ngoId } = req.body;
+
+    if (!userId || !ngoId) {
+      return res.status(400).json({
+        success: false,
+        message: "User ID and NGO ID are required",
+      });
+    }
+
+    // Check if already requested
+    const existingRequest = await VolunteerRequest.findOne({
+      user_id: userId,
+      ngo_id: ngoId,
+    });
+
+    if (existingRequest) {
+      return res.status(400).json({
+        success: false,
+        message: "You have already requested to join this NGO",
+      });
+    }
+
+    const request = await VolunteerRequest.create({
+      user_id: userId,
+      ngo_id: ngoId,
+      status: "Pending",
+    });
+
+    res.json({
+      success: true,
+      message: "Volunteer request sent successfully",
+      request,
+    });
+  } catch (err) {
+    console.error("Join NGO error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+});
+
+
 
 // ======================
 // START SERVER
